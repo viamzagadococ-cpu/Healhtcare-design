@@ -1,0 +1,1343 @@
+// Js.js (module)
+// Added feature: Medicine Prescription (no HTML/CSS edits required)
+// - localStorage persistence for prescriptions
+// - Prescription modal form injected via JS
+// - Prescription list shown in Doctor Dashboard and Patient Dashboard
+// - Search + Sort for prescriptions
+// - Uses custom toast (#customAlert)
+
+(() => {
+  console.log("JS Loaded");
+
+  // -----------------------------
+  // Utilities
+  // -----------------------------
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+  const LS = {
+    USERS: "hms_users",
+    PATIENTS: "hms_patients",
+    APPOINTMENTS: "hms_appointments",
+    PRESCRIPTIONS: "hms_prescriptions",
+    SESSION: "hms_session",
+  };
+
+  const safeParse = (v, fallback) => {
+    try { return JSON.parse(v) ?? fallback; } catch { return fallback; }
+  };
+
+  const getLS = (k, fallback) => safeParse(localStorage.getItem(k), fallback);
+  const setLS = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+  const delLS = (k) => localStorage.removeItem(k);
+
+  const uid = (p = "id") => `${p}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  const todayISO = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const formatDateTime = (ms) => {
+    try { return new Date(ms).toLocaleString(); } catch { return ""; }
+  };
+
+  const normalize = (s) => (s || "").toString().trim().toLowerCase();
+
+  // -----------------------------
+  // Toast using your custom alert
+  // -----------------------------
+  const alertBox = $("#customAlert");
+  const alertMsg = $("#customAlertMessage");
+  const alertClose = $("#customAlertClose");
+
+  let toastTimer = null;
+
+  function showToast(message, duration = 2200) {
+    if (!alertBox || !alertMsg) {
+      alert(message);
+      return;
+    }
+
+    alertMsg.textContent = message;
+    alertBox.style.opacity = "1";
+    alertBox.style.pointerEvents = "auto";
+    alertBox.style.animation = "popOut 0.35s ease forwards";
+
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => hideToast(), duration);
+  }
+
+  function hideToast() {
+    if (!alertBox) return;
+    alertBox.style.animation = "popIn 0.25s ease forwards";
+    setTimeout(() => {
+      alertBox.style.opacity = "0";
+      alertBox.style.pointerEvents = "none";
+    }, 260);
+  }
+
+  alertClose?.addEventListener("click", hideToast);
+
+  // -----------------------------
+  // Seed localStorage demo data
+  // -----------------------------
+  function seedIfEmpty() {
+    const users = getLS(LS.USERS, []);
+    if (!users.length) {
+      setLS(LS.USERS, [
+        { id: uid("u"), firstname: "Demo", lastname: "Staff", email: "staff@demo.com", username: "staff", password: "Password1", role: "staff", createdAt: Date.now() - 300000 },
+        { id: uid("u"), firstname: "Demo", lastname: "Doctor", email: "doctor@demo.com", username: "doctor", password: "Password1", role: "doctor", createdAt: Date.now() - 250000 },
+        { id: uid("u"), firstname: "Demo", lastname: "Patient", email: "patient@demo.com", username: "patient", password: "Password1", role: "patient", createdAt: Date.now() - 200000 },
+      ]);
+    }
+
+    const patients = getLS(LS.PATIENTS, []);
+    if (!patients.length) {
+      setLS(LS.PATIENTS, [
+        { id: uid("p"), firstname: "Juan", lastname: "Dela Cruz", email: "juan@gmail.com", createdAt: Date.now() - 600000 },
+        { id: uid("p"), firstname: "Maria", lastname: "Santos", email: "maria@gmail.com", createdAt: Date.now() - 420000 },
+      ]);
+    }
+
+    const appts = getLS(LS.APPOINTMENTS, []);
+    if (!appts.length) {
+      setLS(LS.APPOINTMENTS, [
+        {
+          id: uid("a"),
+          firstname: "Maria",
+          lastname: "Santos",
+          email: "maria@gmail.com",
+          contact: "9123456789",
+          date: todayISO(),
+          time: "10:30",
+          doctor: "Dr. Smith",
+          status: "Pending",
+          createdAt: Date.now() - 120000,
+        }
+      ]);
+    }
+
+    const pres = getLS(LS.PRESCRIPTIONS, []);
+    if (!pres.length) {
+      setLS(LS.PRESCRIPTIONS, [
+        {
+          id: uid("rx"),
+          patientFirstname: "Maria",
+          patientLastname: "Santos",
+          patientEmail: "maria@gmail.com",
+          doctorName: "Demo Doctor",
+          medicine: "Amoxicillin",
+          dosage: "500mg",
+          frequency: "3 times a day",
+          duration: "7 days",
+          instructions: "Take after meals",
+          dateIssued: todayISO(),
+          createdAt: Date.now() - 90000,
+        }
+      ]);
+    }
+  }
+  seedIfEmpty();
+
+  // -----------------------------
+  // Data API
+  // -----------------------------
+  const getUsers = () => getLS(LS.USERS, []);
+  const setUsers = (v) => setLS(LS.USERS, v);
+
+  const getPatients = () => getLS(LS.PATIENTS, []);
+  const setPatients = (v) => setLS(LS.PATIENTS, v);
+
+  const getAppointments = () => getLS(LS.APPOINTMENTS, []);
+  const setAppointments = (v) => setLS(LS.APPOINTMENTS, v);
+
+  const getPrescriptions = () => getLS(LS.PRESCRIPTIONS, []);
+  const setPrescriptions = (v) => setLS(LS.PRESCRIPTIONS, v);
+
+  const getSession = () => getLS(LS.SESSION, null);
+  const setSession = (v) => setLS(LS.SESSION, v);
+  const clearSession = () => delLS(LS.SESSION);
+
+  // -----------------------------
+  // Page elements
+  // -----------------------------
+  const container = $(".container");
+
+  const loginBox = $("#loginBox");
+  const registerBox = $("#registerBox");
+
+  const loginForm = $("#loginBox form");
+  const registerForm = $("#registerBox form");
+
+  const homePage = $("#homePage");
+  const dashboardPage = $("#dashboardPage");
+  const patientdashboardPage = $("#patientdashboardPage");
+  const doctordashboardPage = $("#doctordashboardPage");
+  const appointmentPage = $("#appointmentPage");
+  const settingsPage = $("#settingsPage");
+
+  const dashboardMain = $(".dashboard-main");
+
+  // Dashboard buttons
+  const dashPatientBtn = $(".home-nav-dashboard-holder_1");
+  const dashDoctorBtn = $(".home-nav-dashboard-holder_2");
+
+  // Sidebar nav IDs
+  const homeBtnDash = $("#homeBtnDash");
+  const appointmentBtnDash = $("#appointmentBtnDash");
+  const settingsBtnDash = $("#settingsBtnDash");
+
+  const homeBtnApp = $("#homeBtnApp");
+  const dashBtnApp = $("#dashBtnApp");
+
+  const homeBtnSett = $("#homeBtnSett");
+  const dashBtnSett = $("#dashBtnSett");
+  const appBtnSett = $("#appBtnSett");
+
+  // Totals
+  const mainTotalAppointments = $("#main-total-appointments");
+  const mainTotalPatients = $("#main-total-patients");
+  const mainTotalDoctors = $("#main-total-doctors");
+
+  const doctorTotalPatients = $("#doctor-total-patients");
+  const doctorTodayAppointments = $("#doctor-today-appointments");
+  const doctorPendingRequests = $("#doctor-pending-requests");
+
+  // Home welcome
+  const welcomeTitle = $("#welcomeTitle");
+
+  // Reset password elements
+  const resetEmailLink = $("#resetEmail");
+  const resetBoxEl = $("#resetBox");
+  const resetEmailInput = $("#resetEmailInput");
+  const resetBtn = $("#resetBtn");
+  const cancelResetBtn = $("#cancelResetBtn");
+
+  // Toggle buttons
+  const registerToggleBtn = $("#register-btn");
+  const loginToggleBtn = $("#login-btn");
+
+  // Password toggles
+  const toggleLoginPassword = $("#toggleLoginPassword");
+  const toggleConfirmPassword = $("#toggleConfirmPassword");
+
+  // Captcha
+  const questionEl = $("#question");
+  const num1El = $("#num1");
+  const num2El = $("#num2");
+  const captchaAnswerEl = $("#captcha-answer");
+
+  // -----------------------------
+  // Page show/hide
+  // -----------------------------
+  function hideAllPages() {
+    if (homePage) homePage.style.display = "none";
+    if (dashboardPage) dashboardPage.style.display = "none";
+    if (patientdashboardPage) patientdashboardPage.style.display = "none";
+    if (doctordashboardPage) doctordashboardPage.style.display = "none";
+    if (appointmentPage) appointmentPage.style.display = "none";
+    if (settingsPage) settingsPage.style.display = "none";
+  }
+
+  function showPage(page) {
+    hideAllPages();
+    if (page) page.style.display = "flex";
+  }
+
+  function showDashboardMainOnly() {
+    if (dashboardMain) dashboardMain.style.display = "block";
+    if (patientdashboardPage) patientdashboardPage.style.display = "none";
+    if (doctordashboardPage) doctordashboardPage.style.display = "none";
+  }
+
+  function showPatientDashboardOnly() {
+    if (dashboardMain) dashboardMain.style.display = "none";
+    if (patientdashboardPage) patientdashboardPage.style.display = "flex";
+    if (doctordashboardPage) doctordashboardPage.style.display = "none";
+  }
+
+  function showDoctorDashboardOnly() {
+    if (dashboardMain) dashboardMain.style.display = "none";
+    if (patientdashboardPage) patientdashboardPage.style.display = "none";
+    if (doctordashboardPage) doctordashboardPage.style.display = "flex";
+  }
+
+  // -----------------------------
+  // Counts
+  // -----------------------------
+  function refreshCounts() {
+    const patients = getPatients();
+    const appts = getAppointments();
+    const doctors = getUsers().filter(u => normalize(u.role) === "doctor");
+
+    if (mainTotalPatients) mainTotalPatients.textContent = String(patients.length);
+    if (mainTotalAppointments) mainTotalAppointments.textContent = String(appts.length);
+    if (mainTotalDoctors) mainTotalDoctors.textContent = String(doctors.length);
+
+    if (doctorTotalPatients) doctorTotalPatients.textContent = String(patients.length);
+
+    const today = todayISO();
+    const todayCount = appts.filter(a => a.date === today).length;
+    const pendingCount = appts.filter(a => normalize(a.status) === "pending").length;
+
+    if (doctorTodayAppointments) doctorTodayAppointments.textContent = String(todayCount);
+    if (doctorPendingRequests) doctorPendingRequests.textContent = String(pendingCount);
+
+    // Appointment stats on appointment page
+    const totalEl = $("#total-count");
+    const todayEl = $("#today-count");
+    const pendingEl = $("#pending-count");
+    const completedEl = $("#completed-count");
+
+    if (totalEl) totalEl.textContent = String(appts.length);
+    if (todayEl) todayEl.textContent = String(todayCount);
+    if (pendingEl) pendingEl.textContent = String(pendingCount);
+    if (completedEl) completedEl.textContent = String(appts.filter(a => normalize(a.status) === "completed").length);
+  }
+
+  // -----------------------------
+  // Welcome title
+  // -----------------------------
+  function updateWelcome() {
+    const sess = getSession();
+    if (!welcomeTitle) return;
+    if (!sess) {
+      welcomeTitle.textContent = "Welcome Back!";
+      return;
+    }
+    welcomeTitle.textContent = `Welcome Back, ${sess.username || sess.role}!`;
+  }
+
+  // -----------------------------
+  // Captcha
+  // -----------------------------
+  function generateCaptcha() {
+    const a = Math.floor(Math.random() * 50) + 1;
+    const b = Math.floor(Math.random() * 50) + 1;
+    if (questionEl) questionEl.textContent = `What is ${a} + ${b}?`;
+    if (num1El) num1El.value = String(a);
+    if (num2El) num2El.value = String(b);
+    if (captchaAnswerEl) captchaAnswerEl.value = "";
+  }
+
+  function captchaIsValid() {
+    const a = parseInt(num1El?.value || "0", 10);
+    const b = parseInt(num2El?.value || "0", 10);
+    const ans = parseInt(captchaAnswerEl?.value || "NaN", 10);
+    return !Number.isNaN(ans) && ans === a + b;
+  }
+
+  // -----------------------------
+  // Auth
+  // -----------------------------
+  function registerUser({ firstname, lastname, email, username, password, role }) {
+    const users = getUsers();
+
+    const emailExists = users.some(u => normalize(u.email) === normalize(email));
+    if (emailExists) return { ok: false, msg: "Email already exists." };
+
+    const usernameExists = users.some(u => normalize(u.username) === normalize(username));
+    if (usernameExists) return { ok: false, msg: "Username already exists." };
+
+    users.push({
+      id: uid("u"),
+      firstname,
+      lastname,
+      email,
+      username,
+      password,
+      role,
+      createdAt: Date.now(),
+    });
+
+    setUsers(users);
+    return { ok: true, msg: "Registration Successful!" };
+  }
+
+  function loginUser(email, password, role) {
+    const u = getUsers().find(x => normalize(x.email) === normalize(email));
+    if (!u) return { ok: false, msg: "Account not found." };
+    if (u.password !== password) return { ok: false, msg: "Wrong password." };
+
+    if (normalize(u.role) !== normalize(role)) {
+      return { ok: false, msg: "Role does not match your account." };
+    }
+
+    // store email for patient filtering prescriptions
+    setSession({ userId: u.id, role: u.role, username: u.username, email: u.email });
+    return { ok: true, user: u };
+  }
+
+  function logout() {
+    clearSession();
+    hideAllPages();
+    if (container) {
+      container.style.display = "block";
+      container.classList.remove("active");
+    }
+    showToast("Logged out.");
+    generateCaptcha();
+  }
+
+  // -----------------------------
+  // Password show/hide
+  // -----------------------------
+  toggleLoginPassword?.addEventListener("click", () => {
+    const input = $("#loginBox #passwordInput");
+    if (!input) return;
+    input.type = input.type === "password" ? "text" : "password";
+    toggleLoginPassword.classList.toggle("fa-eye");
+    toggleLoginPassword.classList.toggle("fa-eye-slash");
+  });
+
+  toggleConfirmPassword?.addEventListener("click", () => {
+    const input = $("#confirmpasswordInput");
+    if (!input) return;
+    input.type = input.type === "password" ? "text" : "password";
+    toggleConfirmPassword.classList.toggle("fa-eye");
+    toggleConfirmPassword.classList.toggle("fa-eye-slash");
+  });
+
+  // -----------------------------
+  // Toggle login/register panels
+  // -----------------------------
+  registerToggleBtn?.addEventListener("click", () => {
+    container?.classList.add("active");
+  });
+
+  loginToggleBtn?.addEventListener("click", () => {
+    container?.classList.remove("active");
+    generateCaptcha();
+  });
+
+  // -----------------------------
+  // Reset password (mock)
+  // -----------------------------
+  resetEmailLink?.addEventListener("click", (e) => {
+    e.preventDefault();
+    container?.classList.add("blur-background");
+    if (resetBoxEl) resetBoxEl.style.display = "flex";
+  });
+
+  cancelResetBtn?.addEventListener("click", () => {
+    container?.classList.remove("blur-background");
+    if (resetBoxEl) resetBoxEl.style.display = "none";
+    if (resetEmailInput) resetEmailInput.value = "";
+  });
+
+  resetBtn?.addEventListener("click", () => {
+    const email = (resetEmailInput?.value || "").trim();
+    if (!email) {
+      showToast("Please enter your email.");
+      return;
+    }
+    showToast("Reset email sent (mock).");
+    container?.classList.remove("blur-background");
+    if (resetBoxEl) resetBoxEl.style.display = "none";
+    if (resetEmailInput) resetEmailInput.value = "";
+  });
+
+  // -----------------------------
+  // Register submit
+  // -----------------------------
+  registerForm?.addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const firstname = ($("#firstnameInput", registerBox)?.value || "").trim();
+    const lastname = ($("#lastanameInput", registerBox)?.value || "").trim();
+    const email = ($("#emailInput", registerBox)?.value || "").trim();
+    const username = ($("#usernameInput", registerBox)?.value || "").trim();
+    const password = ($("#passwordInput", registerBox)?.value || "").trim();
+    const confirm = ($("#confirmpasswordInput", registerBox)?.value || "").trim();
+    const role = ($("#role", registerBox)?.value || "").trim();
+
+    if (!firstname || !lastname || !email || !username || !password || !role) {
+      showToast("Please fill all fields.");
+      return;
+    }
+
+    if (password !== confirm) {
+      showToast("Passwords do not match.");
+      return;
+    }
+
+    const res = registerUser({ firstname, lastname, email, username, password, role });
+    showToast(res.msg);
+
+    if (res.ok) {
+      registerForm.reset();
+      container?.classList.remove("active");
+      generateCaptcha();
+    }
+  });
+
+  // -----------------------------
+  // Login submit
+  // -----------------------------
+  loginForm?.addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    if (!captchaIsValid()) {
+      showToast("Incorrect CAPTCHA. Try again.");
+      generateCaptcha();
+      return;
+    }
+
+    const email = ($("#usernameInput", loginBox)?.value || "").trim();
+    const password = ($("#passwordInput", loginBox)?.value || "").trim();
+    const role = ($("#role", loginBox)?.value || "").trim();
+
+    if (!email || !password || !role) {
+      showToast("Please enter credentials and select role.");
+      return;
+    }
+
+    const res = loginUser(email, password, role);
+    if (!res.ok) {
+      showToast(res.msg);
+      generateCaptcha();
+      return;
+    }
+
+    showToast("Login successful!");
+    if (container) container.style.display = "none";
+    goHome();
+    updateWelcome();
+    refreshCounts();
+  });
+
+  // -----------------------------
+  // Sort button injection
+  // -----------------------------
+  function ensureSortButton(scopeRoot, onToggle) {
+    if (!scopeRoot) return;
+    if ($("[data-sort-btn='true']", scopeRoot)) return;
+
+    const searchInput = $("#search-input", scopeRoot);
+    const resetBtnLocal = $("#reset-btn", scopeRoot);
+
+    if (!searchInput || !resetBtnLocal) return;
+
+    const sortBtn = document.createElement("button");
+    sortBtn.type = "button";
+    sortBtn.textContent = "Sort A–Z";
+    sortBtn.setAttribute("data-sort-btn", "true");
+
+    sortBtn.style.height = "40px";
+    sortBtn.style.padding = "0 15px";
+    sortBtn.style.marginTop = "8px";
+    sortBtn.style.marginLeft = "10px";
+    sortBtn.style.borderRadius = "8px";
+    sortBtn.style.border = "2px solid transparent";
+    sortBtn.style.cursor = "pointer";
+    sortBtn.style.backgroundColor = "#d9304a";
+    sortBtn.style.color = "white";
+    sortBtn.style.transition = "all 0.3s ease";
+    sortBtn.style.display = "inline-block";
+    sortBtn.style.boxSizing = "border-box";
+
+    sortBtn.addEventListener("mouseenter", () => {
+      sortBtn.style.backgroundColor = "white";
+      sortBtn.style.color = "#d9304a";
+      sortBtn.style.borderColor = "#d9304a";
+      sortBtn.style.boxShadow = "0 4px 12px rgba(0,0,0,0.2)";
+    });
+
+    sortBtn.addEventListener("mouseleave", () => {
+      sortBtn.style.backgroundColor = "#d9304a";
+      sortBtn.style.color = "white";
+      sortBtn.style.borderColor = "transparent";
+      sortBtn.style.boxShadow = "none";
+    });
+
+    let mode = "AZ";
+    sortBtn.addEventListener("click", () => {
+      mode = mode === "AZ" ? "ZA" : "AZ";
+      sortBtn.textContent = mode === "AZ" ? "Sort A–Z" : "Sort Z–A";
+      showToast(mode === "AZ" ? "Sorting A to Z" : "Sorting Z to A");
+      onToggle(mode);
+    });
+
+    resetBtnLocal.insertAdjacentElement("afterend", sortBtn);
+  }
+
+  // -----------------------------
+  // Patient Dashboard
+  // -----------------------------
+  let patientSortMode = "AZ";
+
+  function sortPatients(list) {
+    return [...list].sort((a, b) => {
+      const A = `${a.firstname} ${a.lastname}`.toLowerCase();
+      const B = `${b.firstname} ${b.lastname}`.toLowerCase();
+      return patientSortMode === "AZ" ? A.localeCompare(B) : B.localeCompare(A);
+    });
+  }
+
+  function renderPatients(list) {
+    const tbody = $("#patients-list");
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="5">No patient found.</td></tr>`;
+      return;
+    }
+
+    list.forEach((p) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td></td>
+        <td>${p.firstname}</td>
+        <td>${p.lastname}</td>
+        <td>${p.email}</td>
+        <td>${formatDateTime(p.createdAt)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function loadPatientDashboard() {
+    ensureSortButton(patientdashboardPage, (mode) => {
+      patientSortMode = mode;
+      renderPatients(sortPatients(getPatients()));
+    });
+
+    renderPatients(sortPatients(getPatients()));
+    renderPrescriptionWidgets();
+    refreshCounts();
+  }
+
+  $("#add-patient-form")?.addEventListener("submit", (e) => {
+    const isVisible = patientdashboardPage?.style.display !== "none";
+    if (!isVisible) return;
+
+    e.preventDefault();
+
+    const firstname = ($("#patient-firstname", patientdashboardPage)?.value || "").trim();
+    const lastname = ($("#patient-lastname", patientdashboardPage)?.value || "").trim();
+    const email = ($("#patient-email", patientdashboardPage)?.value || "").trim().toLowerCase();
+
+    if (!firstname || !lastname || !email) {
+      showToast("Please fill all fields.");
+      return;
+    }
+
+    const patients = getPatients();
+    const duplicate = patients.some(p => normalize(p.email) === normalize(email));
+    if (duplicate) {
+      showToast("This patient is already in the system!");
+      return;
+    }
+
+    patients.push({ id: uid("p"), firstname, lastname, email, createdAt: Date.now() });
+    setPatients(patients);
+
+    showToast("Patient added successfully!");
+    $("#add-patient-form")?.reset();
+
+    loadPatientDashboard();
+    loadDoctorDashboard();
+  });
+
+  function bindPatientSearch() {
+    const searchInput = $("#search-input", patientdashboardPage);
+    const searchBtn = $("#search-btn", patientdashboardPage);
+    const resetBtnLocal = $("#reset-btn", patientdashboardPage);
+
+    if (!searchInput || !searchBtn || !resetBtnLocal) return;
+
+    searchBtn.addEventListener("click", (e) => {
+      const isVisible = patientdashboardPage?.style.display !== "none";
+      if (!isVisible) return;
+      e.preventDefault();
+
+      const q = normalize(searchInput.value);
+      if (!q) { showToast("Please enter something to search."); return; }
+
+      const filtered = sortPatients(getPatients()).filter(p => {
+        const hay = `${p.firstname} ${p.lastname} ${p.email}`.toLowerCase();
+        return hay.includes(q);
+      });
+
+      showToast(`Found ${filtered.length} result(s).`);
+      renderPatients(filtered);
+    });
+
+    resetBtnLocal.addEventListener("click", (e) => {
+      const isVisible = patientdashboardPage?.style.display !== "none";
+      if (!isVisible) return;
+      e.preventDefault();
+
+      searchInput.value = "";
+      showToast("Search reset.");
+      loadPatientDashboard();
+    });
+  }
+
+  // -----------------------------
+  // Doctor Dashboard
+  // -----------------------------
+  let doctorSortMode = "AZ";
+
+  function sortPatientsForDoctor(list) {
+    return [...list].sort((a, b) => {
+      const A = `${a.firstname} ${a.lastname}`.toLowerCase();
+      const B = `${b.firstname} ${b.lastname}`.toLowerCase();
+      return doctorSortMode === "AZ" ? A.localeCompare(B) : B.localeCompare(A);
+    });
+  }
+
+  function renderDoctorPatients(list) {
+    const tbody = $("#doctor-patient-list");
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="5">No patient found.</td></tr>`;
+      return;
+    }
+
+    list.forEach((p) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td></td>
+        <td>${p.firstname}</td>
+        <td>${p.lastname}</td>
+        <td>${p.email}</td>
+        <td>${new Date(p.createdAt).toLocaleDateString()}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function loadDoctorDashboard() {
+    ensureSortButton(doctordashboardPage, (mode) => {
+      doctorSortMode = mode;
+      renderDoctorPatients(sortPatientsForDoctor(getPatients()));
+    });
+
+    renderDoctorPatients(sortPatientsForDoctor(getPatients()));
+    renderPrescriptionWidgets();
+    refreshCounts();
+  }
+
+  function bindDoctorSearch() {
+    const searchInput = $("#search-input", doctordashboardPage);
+    const searchBtn = $("#search-btn", doctordashboardPage);
+    const resetBtnLocal = $("#reset-btn", doctordashboardPage);
+
+    if (!searchInput || !searchBtn || !resetBtnLocal) return;
+
+    searchBtn.addEventListener("click", (e) => {
+      const isVisible = doctordashboardPage?.style.display !== "none";
+      if (!isVisible) return;
+      e.preventDefault();
+
+      const q = normalize(searchInput.value);
+      if (!q) { showToast("Please enter something to search."); return; }
+
+      const filtered = sortPatientsForDoctor(getPatients()).filter(p => {
+        const hay = `${p.firstname} ${p.lastname} ${p.email}`.toLowerCase();
+        return hay.includes(q);
+      });
+
+      showToast(`Found ${filtered.length} result(s).`);
+      renderDoctorPatients(filtered);
+    });
+
+    resetBtnLocal.addEventListener("click", (e) => {
+      const isVisible = doctordashboardPage?.style.display !== "none";
+      if (!isVisible) return;
+      e.preventDefault();
+
+      searchInput.value = "";
+      showToast("Search reset.");
+      loadDoctorDashboard();
+    });
+  }
+
+  // -----------------------------
+  // Appointment Page
+  // -----------------------------
+  let appointmentSortMode = "AZ";
+
+  function sortAppointments(list) {
+    return [...list].sort((a, b) => {
+      const A = `${a.firstname} ${a.lastname}`.toLowerCase();
+      const B = `${b.firstname} ${b.lastname}`.toLowerCase();
+      return appointmentSortMode === "AZ" ? A.localeCompare(B) : B.localeCompare(A);
+    });
+  }
+
+  function renderAppointments(list) {
+    const tbody = $("#appointment-list");
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="8">No appointment found.</td></tr>`;
+      return;
+    }
+
+    list.forEach((a, idx) => {
+      const tr = document.createElement("tr");
+      const actionBtns = `
+        <button type="button" data-action="complete" data-id="${a.id}">Complete</button>
+        <button type="button" data-action="delete" data-id="${a.id}">Delete</button>
+      `;
+
+      tr.innerHTML = `
+        <td>${idx + 1}</td>
+        <td>${a.firstname} ${a.lastname}</td>
+        <td>${a.email}</td>
+        <td>${a.date}</td>
+        <td>${a.time}</td>
+        <td>${a.doctor}</td>
+        <td>${a.status}</td>
+        <td>${actionBtns}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function loadAppointmentsPage() {
+    ensureSortButton(appointmentPage, (mode) => {
+      appointmentSortMode = mode;
+      renderAppointments(sortAppointments(getAppointments()));
+      refreshCounts();
+    });
+
+    renderAppointments(sortAppointments(getAppointments()));
+    refreshCounts();
+  }
+
+  $("#add-appointment-form")?.addEventListener("submit", (e) => {
+    const isVisible = appointmentPage?.style.display !== "none";
+    if (!isVisible) return;
+    e.preventDefault();
+
+    const firstname = ($("#patient-firstname", appointmentPage)?.value || "").trim();
+    const lastname = ($("#patient-lastname", appointmentPage)?.value || "").trim();
+    const email = ($("#patient-email", appointmentPage)?.value || "").trim().toLowerCase();
+    const contact = ($("#patient-contact", appointmentPage)?.value || "").trim();
+    const date = ($("#appointment-date", appointmentPage)?.value || "").trim();
+    const time = ($("#appointment-time", appointmentPage)?.value || "").trim();
+    const doctor = ($("#doctor-select", appointmentPage)?.value || "").trim();
+
+    if (!firstname || !lastname || !email || !contact || !date || !time || !doctor) {
+      showToast("Please fill all appointment fields.");
+      return;
+    }
+
+    const appts = getAppointments();
+    appts.push({
+      id: uid("a"),
+      firstname,
+      lastname,
+      email,
+      contact,
+      date,
+      time,
+      doctor,
+      status: "Pending",
+      createdAt: Date.now(),
+    });
+
+    setAppointments(appts);
+    showToast("Appointment added successfully!");
+    $("#add-appointment-form")?.reset();
+    loadAppointmentsPage();
+  });
+
+  function bindAppointmentSearch() {
+    const searchInput = $("#search-input", appointmentPage);
+    const searchBtn = $("#search-btn", appointmentPage);
+    const resetBtnLocal = $("#reset-btn", appointmentPage);
+
+    if (!searchInput || !searchBtn || !resetBtnLocal) return;
+
+    searchBtn.addEventListener("click", (e) => {
+      const isVisible = appointmentPage?.style.display !== "none";
+      if (!isVisible) return;
+      e.preventDefault();
+
+      const q = normalize(searchInput.value);
+      if (!q) { showToast("Please enter something to search."); return; }
+
+      const filtered = sortAppointments(getAppointments()).filter(a => {
+        const hay = `${a.firstname} ${a.lastname} ${a.email} ${a.doctor} ${a.status}`.toLowerCase();
+        return hay.includes(q);
+      });
+
+      showToast(`Found ${filtered.length} result(s).`);
+      renderAppointments(filtered);
+      refreshCounts();
+    });
+
+    resetBtnLocal.addEventListener("click", (e) => {
+      const isVisible = appointmentPage?.style.display !== "none";
+      if (!isVisible) return;
+      e.preventDefault();
+
+      searchInput.value = "";
+      showToast("Search reset.");
+      loadAppointmentsPage();
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target;
+    if (!(btn instanceof HTMLElement)) return;
+
+    const action = btn.getAttribute("data-action");
+    const id = btn.getAttribute("data-id");
+    if (!action || !id) return;
+
+    if (action === "delete") {
+      const appts = getAppointments().filter(a => a.id !== id);
+      setAppointments(appts);
+      showToast("Appointment deleted.");
+      loadAppointmentsPage();
+    }
+
+    if (action === "complete") {
+      const appts = getAppointments().map(a => {
+        if (a.id === id) return { ...a, status: "Completed" };
+        return a;
+      });
+      setAppointments(appts);
+      showToast("Appointment marked as completed.");
+      loadAppointmentsPage();
+    }
+  });
+
+  // -----------------------------
+  // New Feature: Medicine Prescription
+  // -----------------------------
+  let rxSortMode = "AZ";
+
+  function sortPrescriptions(list) {
+    return [...list].sort((a, b) => {
+      const A = `${a.patientFirstname} ${a.patientLastname}`.toLowerCase();
+      const B = `${b.patientFirstname} ${b.patientLastname}`.toLowerCase();
+      return rxSortMode === "AZ" ? A.localeCompare(B) : B.localeCompare(A);
+    });
+  }
+
+  function buildPrescriptionModal() {
+    if ($("#rxModal")) return;
+
+    const modal = document.createElement("div");
+    modal.id = "rxModal";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.display = "none";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.background = "rgba(0,0,0,0.45)";
+    modal.style.zIndex = "9999";
+    modal.style.padding = "20px";
+
+    const card = document.createElement("div");
+    card.style.width = "min(820px, 96vw)";
+    card.style.background = "white";
+    card.style.borderRadius = "16px";
+    card.style.boxShadow = "0 10px 30px rgba(0,0,0,0.25)";
+    card.style.padding = "18px";
+
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="font-size:20px; font-weight:700;">Create Medicine Prescription</div>
+        <button id="rxCloseBtn" type="button" style="cursor:pointer; border:none; background:#d9304a; color:white; padding:8px 12px; border-radius:10px;">Close</button>
+      </div>
+
+      <div style="margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div>
+          <div style="font-weight:600; margin-bottom:6px;">Patient Email</div>
+          <input id="rxPatientEmail" type="email" placeholder="example@gmail.com" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc;">
+        </div>
+        <div>
+          <div style="font-weight:600; margin-bottom:6px;">Doctor Name</div>
+          <input id="rxDoctorName" type="text" placeholder="Dr. Name" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc;">
+        </div>
+
+        <div>
+          <div style="font-weight:600; margin-bottom:6px;">Medicine</div>
+          <input id="rxMedicine" type="text" placeholder="Medicine name" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc;">
+        </div>
+        <div>
+          <div style="font-weight:600; margin-bottom:6px;">Dosage</div>
+          <input id="rxDosage" type="text" placeholder="500mg" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc;">
+        </div>
+
+        <div>
+          <div style="font-weight:600; margin-bottom:6px;">Frequency</div>
+          <input id="rxFrequency" type="text" placeholder="3 times a day" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc;">
+        </div>
+        <div>
+          <div style="font-weight:600; margin-bottom:6px;">Duration</div>
+          <input id="rxDuration" type="text" placeholder="7 days" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc;">
+        </div>
+
+        <div style="grid-column:1 / -1;">
+          <div style="font-weight:600; margin-bottom:6px;">Instructions</div>
+          <textarea id="rxInstructions" rows="3" placeholder="Take after meals" style="width:100%; padding:10px; border-radius:10px; border:1px solid #ccc; resize:vertical;"></textarea>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button id="rxSaveBtn" type="button" style="cursor:pointer; border:none; background:#d9304a; color:white; padding:10px 14px; border-radius:10px; font-weight:700;">Save Prescription</button>
+          <button id="rxClearBtn" type="button" style="cursor:pointer; border:1px solid #d9304a; background:white; color:#d9304a; padding:10px 14px; border-radius:10px; font-weight:700;">Clear</button>
+        </div>
+        <div style="text-align:right; color:#666; font-size:12px;">
+          Tip: patient email must exist in Patient list for auto name fill
+        </div>
+      </div>
+    `;
+
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+
+    const close = () => { modal.style.display = "none"; };
+
+    $("#rxCloseBtn")?.addEventListener("click", close);
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+    $("#rxClearBtn")?.addEventListener("click", () => {
+      $("#rxPatientEmail").value = "";
+      $("#rxDoctorName").value = "";
+      $("#rxMedicine").value = "";
+      $("#rxDosage").value = "";
+      $("#rxFrequency").value = "";
+      $("#rxDuration").value = "";
+      $("#rxInstructions").value = "";
+      showToast("Cleared.");
+    });
+
+    $("#rxSaveBtn")?.addEventListener("click", () => {
+      const patientEmail = normalize($("#rxPatientEmail")?.value);
+      const doctorName = ($("#rxDoctorName")?.value || "").trim();
+      const medicine = ($("#rxMedicine")?.value || "").trim();
+      const dosage = ($("#rxDosage")?.value || "").trim();
+      const frequency = ($("#rxFrequency")?.value || "").trim();
+      const duration = ($("#rxDuration")?.value || "").trim();
+      const instructions = ($("#rxInstructions")?.value || "").trim();
+
+      if (!patientEmail || !doctorName || !medicine || !dosage || !frequency || !duration) {
+        showToast("Please fill all prescription fields.");
+        return;
+      }
+
+      const p = getPatients().find(x => normalize(x.email) === patientEmail);
+      const patientFirstname = p ? p.firstname : "Unknown";
+      const patientLastname = p ? p.lastname : "Patient";
+
+      const pres = getPrescriptions();
+      pres.push({
+        id: uid("rx"),
+        patientFirstname,
+        patientLastname,
+        patientEmail,
+        doctorName,
+        medicine,
+        dosage,
+        frequency,
+        duration,
+        instructions,
+        dateIssued: todayISO(),
+        createdAt: Date.now(),
+      });
+
+      setPrescriptions(pres);
+      showToast("Prescription saved.");
+      close();
+      renderPrescriptionWidgets();
+    });
+  }
+
+  function openPrescriptionModal() {
+    const sess = getSession();
+    if (!sess) { showToast("Please login first."); return; }
+
+    const role = normalize(sess.role);
+    if (role !== "doctor" && role !== "staff") {
+      showToast("Only Doctor or Staff can create prescriptions.");
+      return;
+    }
+
+    buildPrescriptionModal();
+    const modal = $("#rxModal");
+    if (!modal) return;
+
+    // prefill doctor name
+    const user = getUsers().find(u => u.id === sess.userId);
+    const docName = user ? `${user.firstname} ${user.lastname}` : (sess.username || "Doctor");
+    const doctorField = $("#rxDoctorName");
+    if (doctorField) doctorField.value = docName;
+
+    modal.style.display = "flex";
+  }
+
+  function ensurePrescriptionSection(scopeRoot) {
+    if (!scopeRoot) return;
+    if ($("[data-rx-section='true']", scopeRoot)) return;
+
+    const section = document.createElement("div");
+    section.setAttribute("data-rx-section", "true");
+    section.style.marginTop = "16px";
+    section.style.background = "rgba(255,255,255,0.85)";
+    section.style.borderRadius = "14px";
+    section.style.padding = "14px";
+    section.style.boxShadow = "0 8px 18px rgba(0,0,0,0.12)";
+
+    section.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <div style="font-size:18px; font-weight:800;">Prescriptions</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <input id="rxSearchInput" type="text" placeholder="Search prescription" style="padding:10px; border-radius:10px; border:1px solid #ccc; min-width:240px;">
+          <button id="rxFindBtn" type="button" style="cursor:pointer; border:none; background:#d9304a; color:white; padding:10px 14px; border-radius:10px; font-weight:700;">Find</button>
+          <button id="rxResetBtn" type="button" style="cursor:pointer; border:none; background:#d9304a; color:white; padding:10px 14px; border-radius:10px; font-weight:700;">Reset</button>
+          <button id="rxSortBtn" type="button" style="cursor:pointer; border:none; background:#d9304a; color:white; padding:10px 14px; border-radius:10px; font-weight:700;">Sort A–Z</button>
+        </div>
+      </div>
+
+      <div style="margin-top:12px; overflow:auto;">
+        <table style="width:100%; border-collapse:collapse; min-width:880px;">
+          <thead>
+            <tr style="background:#d9304a; color:white;">
+              <th style="padding:10px; text-align:left;">Patient</th>
+              <th style="padding:10px; text-align:left;">Email</th>
+              <th style="padding:10px; text-align:left;">Medicine</th>
+              <th style="padding:10px; text-align:left;">Dosage</th>
+              <th style="padding:10px; text-align:left;">Frequency</th>
+              <th style="padding:10px; text-align:left;">Duration</th>
+              <th style="padding:10px; text-align:left;">Doctor</th>
+              <th style="padding:10px; text-align:left;">Issued</th>
+            </tr>
+          </thead>
+          <tbody id="rxTableBody">
+            <tr><td colspan="8" style="padding:10px;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    // place it under the existing content of the page
+    scopeRoot.appendChild(section);
+
+    $("#rxFindBtn", section)?.addEventListener("click", () => {
+      const q = normalize($("#rxSearchInput", section)?.value);
+      if (!q) { showToast("Please enter something to search."); return; }
+      const list = getVisiblePrescriptions();
+      const filtered = sortPrescriptions(list).filter(r => {
+        const hay = `${r.patientFirstname} ${r.patientLastname} ${r.patientEmail} ${r.medicine} ${r.doctorName} ${r.instructions}`.toLowerCase();
+        return hay.includes(q);
+      });
+      showToast(`Found ${filtered.length} result(s).`);
+      renderPrescriptionTable(filtered, section);
+    });
+
+    $("#rxResetBtn", section)?.addEventListener("click", () => {
+      $("#rxSearchInput", section).value = "";
+      showToast("Search reset.");
+      renderPrescriptionTable(sortPrescriptions(getVisiblePrescriptions()), section);
+    });
+
+    $("#rxSortBtn", section)?.addEventListener("click", () => {
+      rxSortMode = rxSortMode === "AZ" ? "ZA" : "AZ";
+      $("#rxSortBtn", section).textContent = rxSortMode === "AZ" ? "Sort A–Z" : "Sort Z–A";
+      renderPrescriptionTable(sortPrescriptions(getVisiblePrescriptions()), section);
+    });
+  }
+
+  function getVisiblePrescriptions() {
+    const sess = getSession();
+    const role = normalize(sess?.role);
+
+    const all = getPrescriptions();
+
+    // Patient should only see their own prescriptions
+    if (role === "patient") {
+      const email = normalize(sess?.email);
+      return all.filter(r => normalize(r.patientEmail) === email);
+    }
+
+    // Doctor and staff can see all
+    return all;
+  }
+
+  function renderPrescriptionTable(list, scopeSection) {
+    const tbody = $("#rxTableBody", scopeSection || document);
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="8" style="padding:10px;">No prescription found.</td></tr>`;
+      return;
+    }
+
+    list.forEach((r) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.patientFirstname} ${r.patientLastname}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.patientEmail}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.medicine}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.dosage}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.frequency}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.duration}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.doctorName}</td>
+        <td style="padding:10px; border-bottom:1px solid #eee;">${r.dateIssued}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderPrescriptionWidgets() {
+    // show prescriptions in BOTH dashboards if they exist in DOM
+    if (doctordashboardPage && doctordashboardPage.style.display !== "none") {
+      ensurePrescriptionSection(doctordashboardPage);
+      const sec = $("[data-rx-section='true']", doctordashboardPage);
+      if (sec) renderPrescriptionTable(sortPrescriptions(getVisiblePrescriptions()), sec);
+    }
+
+    if (patientdashboardPage && patientdashboardPage.style.display !== "none") {
+      ensurePrescriptionSection(patientdashboardPage);
+      const sec = $("[data-rx-section='true']", patientdashboardPage);
+      if (sec) renderPrescriptionTable(sortPrescriptions(getVisiblePrescriptions()), sec);
+    }
+  }
+
+  // Hook existing button
+  $("#createPrescriptionBtn")?.addEventListener("click", () => {
+    openPrescriptionModal();
+  });
+
+  // -----------------------------
+  // Sidebar navigation
+  // -----------------------------
+  function goHome() {
+    showPage(homePage);
+    refreshCounts();
+    updateWelcome();
+  }
+
+  function goDashboard() {
+    showPage(dashboardPage);
+    showDashboardMainOnly();
+    refreshCounts();
+  }
+
+  function goAppointment() {
+    showPage(appointmentPage);
+    loadAppointmentsPage();
+  }
+
+  function goSettings() {
+    showPage(settingsPage);
+    refreshCounts();
+  }
+
+  homeBtnDash?.addEventListener("click", goHome);
+  appointmentBtnDash?.addEventListener("click", goAppointment);
+  settingsBtnDash?.addEventListener("click", goSettings);
+
+  homeBtnApp?.addEventListener("click", goHome);
+  dashBtnApp?.addEventListener("click", goDashboard);
+
+  homeBtnSett?.addEventListener("click", goHome);
+  dashBtnSett?.addEventListener("click", goDashboard);
+  appBtnSett?.addEventListener("click", goAppointment);
+
+  $$("#homePage .home-nav-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const t = normalize(item.textContent);
+      if (t.includes("home")) goHome();
+      else if (t.includes("dashboard")) goDashboard();
+      else if (t.includes("appointment")) goAppointment();
+      else if (t.includes("settings")) goSettings();
+    });
+  });
+
+  $$("#appointmentPage .home-nav-item").forEach((item) => {
+    if (item.id) return;
+    item.addEventListener("click", () => {
+      const t = normalize(item.textContent);
+      if (t.includes("home")) goHome();
+      else if (t.includes("dashboard")) goDashboard();
+      else if (t.includes("appointment")) goAppointment();
+      else if (t.includes("settings")) goSettings();
+    });
+  });
+
+  $$("#settingsPage .home-nav-item").forEach((item) => {
+    if (item.id) return;
+    item.addEventListener("click", () => {
+      const t = normalize(item.textContent);
+      if (t.includes("home")) goHome();
+      else if (t.includes("dashboard")) goDashboard();
+      else if (t.includes("appointment")) goAppointment();
+      else if (t.includes("settings")) goSettings();
+    });
+  });
+
+  dashPatientBtn?.addEventListener("click", () => {
+    showPatientDashboardOnly();
+    loadPatientDashboard();
+  });
+
+  dashDoctorBtn?.addEventListener("click", () => {
+    showDoctorDashboardOnly();
+    loadDoctorDashboard();
+  });
+
+  $("#viewAppointmentsBtn")?.addEventListener("click", () => {
+    goAppointment();
+  });
+
+  // Logout button
+  $$(".btn-outline").forEach((b) => {
+    b.addEventListener("click", () => {
+      const sess = getSession();
+      if (!sess) return;
+      logout();
+    });
+  });
+
+  // -----------------------------
+  // Bind search handlers once
+  // -----------------------------
+  bindPatientSearch();
+  bindDoctorSearch();
+  bindAppointmentSearch();
+
+  // -----------------------------
+  // Initial load
+  // -----------------------------
+  document.addEventListener("DOMContentLoaded", () => {
+    generateCaptcha();
+
+    const DEV_AUTO_ENTER = true; // set false to restore login gating
+    const sess = getSession();
+
+    if (sess || DEV_AUTO_ENTER) {
+      if (container) container.style.display = "none";
+      goHome();
+    } else {
+      hideAllPages();
+      if (container) container.style.display = "block";
+    }
+
+    refreshCounts();
+    updateWelcome();
+
+    loadPatientDashboard();
+    loadDoctorDashboard();
+    loadAppointmentsPage();
+
+    hideToast();
+  });
+})();
